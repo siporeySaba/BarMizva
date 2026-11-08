@@ -33,6 +33,21 @@ button.pink{background:var(--pink)}
 .row.old{opacity:.45}
 .row.old .n::after{content:" · הוחלף בעדכון";font-size:13px}
 .when{font-size:12px;opacity:.6;display:block}
+.overlay{position:fixed;inset:0;background:rgba(23,35,107,.45);display:flex;align-items:flex-end;justify-content:center;z-index:10}
+.overlay.hidden{display:none}
+.sheet{background:#fff;width:100%;max-width:480px;border-radius:24px 24px 0 0;padding:22px 18px 26px;border-top:4px solid var(--gold)}
+.sheet h2{font-family:'Secular One',Heebo,sans-serif;font-weight:400;margin:0 0 12px;text-align:center}
+.sheet label{display:block;font-weight:700;margin:6px 0}
+.sheet input{width:100%;font:inherit;padding:12px;border:2px solid #C9D8F0;border-radius:12px;margin-bottom:12px}
+.choice{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+.choice button{background:#fff;color:var(--ink);border:2px solid #C9D8F0}
+.choice button[aria-pressed=true]{background:var(--night);color:#fff;border-color:var(--night)}
+.stepper{display:flex;align-items:center;justify-content:center;gap:18px;margin-bottom:14px}
+.stepper button{width:52px;height:52px;border-radius:50%;background:var(--gold);color:var(--night);font-size:28px;padding:0}
+.stepper output{font-family:'Secular One',Heebo,sans-serif;font-size:40px;min-width:60px;text-align:center}
+.edBtns{display:grid;grid-template-columns:2fr 1fr;gap:8px}
+button.ghost{background:#E6E9F5;color:var(--ink)}
+.err{color:#B3123F;font-weight:700;text-align:center;min-height:1.2em;margin:8px 0 0}
 </style>
 </head>
 <body>
@@ -46,8 +61,30 @@ button.pink{background:var(--pink)}
       <div class="stat"><b id="no">0</b><span>לא מגיעים</span></div>
     </div>
     <div class="tools"><button id="copy">העתקת רשימה</button><button id="csv">הורדת קובץ Excel</button></div>
+    <button class="pink" id="add" style="width:100%;margin-bottom:12px">➕ הוספת אורח ידנית</button>
     <input class="search" id="q" type="search" placeholder="🔍 חיפוש לפי שם">
     <div id="list"></div>
+  </div>
+  <div class="overlay hidden" id="editor">
+    <div class="sheet" role="dialog" aria-labelledby="edTitle">
+      <h2 id="edTitle">עריכת אישור</h2>
+      <label for="edName">שם</label>
+      <input type="text" id="edName" maxlength="70">
+      <div class="choice">
+        <button type="button" id="edYes">מגיעים</button>
+        <button type="button" id="edNo">לא מגיעים</button>
+      </div>
+      <div class="stepper" id="edStep">
+        <button type="button" id="edMinus" aria-label="פחות">−</button>
+        <output id="edCount">1</output>
+        <button type="button" id="edPlus" aria-label="יותר">+</button>
+      </div>
+      <div class="edBtns">
+        <button class="pink" id="edSave">שמירה</button>
+        <button id="edCancel" class="ghost">ביטול</button>
+      </div>
+      <p class="err" id="edErr"></p>
+    </div>
   </div>
 </main>
 
@@ -55,7 +92,7 @@ button.pink{background:var(--pink)}
 import { firebaseConfig, ADMIN_EMAIL } from "./config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, query, orderBy, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, collection, query, orderBy, onSnapshot, deleteDoc, doc, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const app = initializeApp(firebaseConfig), auth = getAuth(app), db = getFirestore(app);
 const $ = id => document.getElementById(id);
@@ -75,7 +112,7 @@ onAuthStateChanged(auth, user => {
 });
 
 // אורח ששלח כמה פעמים – נספר רק האישור האחרון שלו (לפי שם)
-const norm = s => String(s || "").trim().replace(/s+/g, " ").replace(/["'״׳]/g, "");
+const norm = s => String(s || "").trim().replace(/\s+/g, " ").replace(/["'״׳]/g, "");
 function latest() {
   const seen = new Set();
   rows.forEach(r => { const k = norm(r.name); r.old = seen.has(k); seen.add(k); }); // rows ממוינים מהחדש לישן
@@ -108,13 +145,66 @@ function render() {
     const coming = r.attending !== false;
     b.className = "badge" + (coming ? "" : " no");
     b.textContent = coming ? r.guests : "לא מגיע";
+    const e = document.createElement("button");
+    e.className = "del"; e.textContent = "✏️"; e.setAttribute("aria-label", "עריכה");
+    e.onclick = () => openEditor(r);
     const d = document.createElement("button");
     d.className = "del"; d.textContent = "🗑"; d.setAttribute("aria-label", "מחיקה");
     d.onclick = () => confirm(`למחוק את ${r.name}?`) && deleteDoc(doc(db, "rsvps", r.id));
-    el.append(n, b, d);
+    el.append(n, b, e, d);
     $("list").append(el);
   });
 }
+
+// ---------- עריכה / הוספה ידנית ----------
+// שמירה = רשומה חדשה (נספרת כי היא האחרונה לאותו שם) + מחיקת הישנה.
+// כך משתמשים רק בפעולות שכבר עובדות (יצירה ומחיקה) ולא תלויים בהרשאת עדכון.
+let editing = null, edGuests = 1, edComing = true;
+function setEd() {
+  $("edCount").textContent = edGuests;
+  $("edYes").setAttribute("aria-pressed", edComing);
+  $("edNo").setAttribute("aria-pressed", !edComing);
+  $("edStep").classList.toggle("hidden", !edComing);
+}
+function openEditor(r) {
+  editing = r;
+  $("edTitle").textContent = r ? "עריכת אישור" : "הוספת אורח ידנית";
+  $("edName").value = r?.name || "";
+  edComing = r ? r.attending !== false : true;
+  edGuests = r && r.attending !== false ? r.guests || 1 : 1;
+  $("edErr").textContent = "";
+  setEd();
+  $("editor").classList.remove("hidden");
+  if (!r) $("edName").focus();
+}
+$("add").onclick = () => openEditor(null);
+$("edCancel").onclick = () => $("editor").classList.add("hidden");
+$("editor").onclick = ev => { if (ev.target.id === "editor") $("editor").classList.add("hidden"); };
+$("edPlus").onclick = () => { edGuests = Math.min(30, edGuests + 1); setEd(); };
+$("edMinus").onclick = () => { edGuests = Math.max(1, edGuests - 1); setEd(); };
+$("edYes").onclick = () => { edComing = true; setEd(); };
+$("edNo").onclick = () => { edComing = false; setEd(); };
+$("edSave").onclick = async () => {
+  const name = $("edName").value.trim().replace(/\s+/g, " ");
+  if (!name) { $("edErr").textContent = "נא למלא שם"; return; }
+  $("edSave").disabled = true;
+  try {
+    await addDoc(collection(db, "rsvps"), {
+      name, attending: edComing, guests: edComing ? edGuests : 0, createdAt: serverTimestamp()
+    });
+    if (editing) {
+      // מוחקים את הרשומה הנערכת וגם עדכונים ישנים יותר של אותו שם
+      const old = rows.filter(x => x.id === editing.id || (norm(x.name) === norm(editing.name) && x.old));
+      await Promise.all(old.map(x => deleteDoc(doc(db, "rsvps", x.id)).catch(() => {})));
+    }
+    $("editor").classList.add("hidden");
+  } catch (err) {
+    console.error(err);
+    $("edErr").textContent = "השמירה נכשלה, נסו שוב";
+  } finally {
+    $("edSave").disabled = false;
+  }
+};
 
 $("copy").onclick = async () => {
   const cur = latest(), yes = cur.filter(r => r.attending !== false), no = cur.filter(r => r.attending === false);
