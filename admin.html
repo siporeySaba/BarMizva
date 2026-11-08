@@ -29,6 +29,10 @@ button.pink{background:var(--pink)}
 .badge.no{background:#E6E9F5;font-weight:500}
 .del{background:none;color:#B3123F;padding:6px;font-size:20px}
 .hidden{display:none}
+.search{width:100%;font:inherit;padding:12px 14px;border:2px solid #C9D8F0;border-radius:14px;margin-bottom:12px}
+.row.old{opacity:.45}
+.row.old .n::after{content:" · הוחלף בעדכון";font-size:13px}
+.when{font-size:12px;opacity:.6;display:block}
 </style>
 </head>
 <body>
@@ -42,6 +46,7 @@ button.pink{background:var(--pink)}
       <div class="stat"><b id="no">0</b><span>לא מגיעים</span></div>
     </div>
     <div class="tools"><button id="copy">העתקת רשימה</button><button id="csv">הורדת קובץ Excel</button></div>
+    <input class="search" id="q" type="search" placeholder="🔍 חיפוש לפי שם">
     <div id="list"></div>
   </div>
 </main>
@@ -69,18 +74,36 @@ onAuthStateChanged(auth, user => {
   });
 });
 
+// אורח ששלח כמה פעמים – נספר רק האישור האחרון שלו (לפי שם)
+const norm = s => String(s || "").trim().replace(/s+/g, " ").replace(/["'״׳]/g, "");
+function latest() {
+  const seen = new Set();
+  rows.forEach(r => { const k = norm(r.name); r.old = seen.has(k); seen.add(k); }); // rows ממוינים מהחדש לישן
+  return rows.filter(r => !r.old);
+}
+$("q").oninput = render;
+
 function render() {
-  const yes = rows.filter(r => r.attending !== false);
+  const cur = latest();
+  const yes = cur.filter(r => r.attending !== false);
   $("total").textContent = yes.reduce((s, r) => s + r.guests, 0);
   $("yes").textContent = yes.length;
-  $("no").textContent = rows.length - yes.length;
+  $("no").textContent = cur.length - yes.length;
   $("list").innerHTML = "";
-  rows.forEach(r => {
+  const q = norm($("q").value);
+  rows.filter(r => !q || norm(r.name).includes(q)).forEach(r => {
     const el = document.createElement("div");
-    el.className = "row";
+    el.className = "row" + (r.old ? " old" : "");
     const n = document.createElement("div");
     n.className = "n";
     n.textContent = r.name;
+    const t = r.createdAt?.toDate?.();
+    if (t) {
+      const w = document.createElement("span");
+      w.className = "when";
+      w.textContent = t.toLocaleString("he-IL", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" });
+      n.append(w);
+    }
     const b = document.createElement("span");
     const coming = r.attending !== false;
     b.className = "badge" + (coming ? "" : " no");
@@ -94,7 +117,7 @@ function render() {
 }
 
 $("copy").onclick = async () => {
-  const yes = rows.filter(r => r.attending !== false), no = rows.filter(r => r.attending === false);
+  const cur = latest(), yes = cur.filter(r => r.attending !== false), no = cur.filter(r => r.attending === false);
   const text = yes.map(r => `${r.name} - ${r.guests}`).join("\n") + `\n\nסה״כ: ${yes.reduce((s, r) => s + r.guests, 0)}`
     + (no.length ? `\n\nלא מגיעים:\n` + no.map(r => r.name).join("\n") : "");
   await navigator.clipboard.writeText(text);
@@ -105,7 +128,7 @@ $("copy").onclick = async () => {
 $("csv").onclick = () => {
   const q = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
   const lines = [["שם", "מגיע", "אורחים"].map(q).join(",")]
-    .concat(rows.map(r => [r.name, r.attending === false ? "לא" : "כן", r.guests].map(q).join(",")));
+    .concat(latest().map(r => [r.name, r.attending === false ? "לא" : "כן", r.guests].map(q).join(",")));
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob(["\ufeff" + lines.join("\n")], { type: "text/csv;charset=utf-8" }));
   a.download = "rsvp.csv";

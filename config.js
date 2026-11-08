@@ -14,5 +14,9 @@ export const ADMIN_EMAIL = "hagaico100@gmail.com";
 export const EVENT = {
   name: "אורי עוז כהן",
   date: "יום שני, 7.12 · כ״ז בכסלו",
-  place: "מועדון בני נצרים"
+  dateISO: "2026-12-07",   // לכפתור "הוסף ליומן"
+  time: "19:00",           // אם ריק – השעה לא מוצגת והיומן יוצר אירוע של יום שלם
+  place: "מועדון בני נצרים",
+  lat: 31.140536,          // מיקום לניווט (Waze / Google Maps)
+  lng: 34.313832
 };

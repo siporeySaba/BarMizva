@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>אישור הגעה לבר מצווה</title>
+<!-- תצוגה מקדימה בוואטסאפ / פייסבוק -->
+<meta property="og:type" content="website">
+<meta property="og:locale" content="he_IL">
+<meta property="og:title" content="בר מצווה לאורי עוז 🎉">
+<meta property="og:description" content="יום שני, 7.12 · כ״ז בכסלו · 19:00 · מועדון בני נצרים. נשמח לאישור הגעה!">
+<meta name="description" content="יום שני, 7.12 · כ״ז בכסלו · 19:00 · מועדון בני נצרים. נשמח לאישור הגעה!">
+<meta name="theme-color" content="#17236B">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Secular+One&family=Heebo:wght@400;500;700&display=swap" rel="stylesheet">
@@ -38,6 +45,11 @@ input:focus,textarea:focus,button:focus-visible{outline:3px solid var(--pink);ou
 .decline{width:100%;margin-top:12px;font:inherit;font-weight:700;padding:14px;border-radius:16px;border:2px solid var(--line);background:#fff;color:var(--ink);cursor:pointer}
 .err{color:#B3123F;font-weight:700;text-align:center;margin-top:14px;min-height:1.2em}
 .hidden{display:none}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;max-width:420px;margin:16px auto 0}
+.actions a,.actions button{font:inherit;font-weight:700;font-size:15px;padding:10px 8px;border-radius:12px;border:2px solid rgba(255,255,255,.35);background:rgba(255,255,255,.1);color:#fff;text-decoration:none;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px}
+.actions .wide{grid-column:1/-1}
+.prev{background:#FFF7E3;border:2px dashed var(--gold);border-radius:16px;padding:12px 14px;margin-bottom:16px;text-align:center}
+.prev b{display:block;margin-bottom:6px}
 .thanks{text-align:center}
 .thanks .big{font-size:60px}
 .confetti{position:fixed;top:-20px;font-size:26px;pointer-events:none;animation:fall linear forwards}
@@ -52,12 +64,18 @@ input:focus,textarea:focus,button:focus-visible{outline:3px solid var(--pink);ou
   <p class="name" id="evName"></p>
   <p id="evDate"></p>
   <p id="evPlace"></p>
+  <div class="actions">
+    <a id="waze" target="_blank" rel="noopener">🚗 Waze</a>
+    <a id="gmaps" target="_blank" rel="noopener">📍 Google Maps</a>
+    <a id="gcal" class="wide" target="_blank" rel="noopener">📅 הוספה ליומן</a>
+  </div>
 </header>
 
 <main>
   <section class="card" id="formCard">
     <h2>נשמח לראות אתכם! 🎉</h2>
 
+    <div id="prev" class="prev hidden"></div>
     <div id="step1">
       <label for="name" style="margin-top:0">שם מלא</label>
       <input type="text" id="name" autocomplete="name" maxlength="70" placeholder="למשל: ישראל ישראלי">
@@ -95,10 +113,46 @@ import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.g
 const db = getFirestore(initializeApp(firebaseConfig));
 const $ = id => document.getElementById(id);
 $("evName").textContent = EVENT.name;
-$("evDate").textContent = EVENT.date;
+$("evDate").textContent = EVENT.time ? `${EVENT.date} · בשעה ${EVENT.time}` : EVENT.date;
 $("evPlace").textContent = EVENT.place;
 
-let guests = 1;
+// ניווט + יומן
+$("waze").href = `https://waze.com/ul?ll=${EVENT.lat},${EVENT.lng}&navigate=yes`;
+$("gmaps").href = `https://www.google.com/maps/dir/?api=1&destination=${EVENT.lat},${EVENT.lng}`;
+{
+  const d = EVENT.dateISO.replace(/-/g, "");
+  let dates;
+  if (EVENT.time) {
+    const [h, m] = EVENT.time.split(":").map(Number);
+    const end = new Date(2000, 0, 1, h + 4, m);
+    const p = n => String(n).padStart(2, "0");
+    dates = `${d}T${p(h)}${p(m)}00/${d}T${p(end.getHours())}${p(end.getMinutes())}00`;
+  } else {
+    const next = new Date(EVENT.dateISO + "T12:00"); next.setDate(next.getDate() + 1);
+    dates = `${d}/${next.toISOString().slice(0, 10).replace(/-/g, "")}`;
+  }
+  $("gcal").href = "https://calendar.google.com/calendar/render?" + new URLSearchParams({
+    action: "TEMPLATE", text: `בר מצווה – ${EVENT.name}`, dates,
+    location: `${EVENT.place} (${EVENT.lat},${EVENT.lng})`, ctz: "Asia/Jerusalem",
+  });
+}
+
+// אם כבר אישרו מהמכשיר הזה – מציגים ומאפשרים לעדכן (בדף הניהול נספר רק האישור האחרון לכל שם)
+const PREV_KEY = "barmitzva.rsvp";
+let prev = null;
+try { prev = JSON.parse(localStorage.getItem(PREV_KEY) || "null"); } catch {}
+if (prev?.name) {
+  $("name").value = prev.name;
+  $("prev").innerHTML = "";
+  const b = document.createElement("b");
+  b.textContent = prev.attending
+    ? `כבר אישרתם הגעה של ${prev.guests} ${prev.guests === 1 ? "אורח" : "אורחים"} 👍`
+    : "כבר עדכנתם שלא תגיעו";
+  $("prev").append(b, document.createTextNode("רוצים לשנות? פשוט שלחו שוב – האישור הקודם יוחלף."));
+  $("prev").classList.remove("hidden");
+}
+
+let guests = prev?.attending ? prev.guests : 1;
 const setGuests = n => { guests = Math.min(20, Math.max(1, n)); $("count").textContent = guests; };
 $("plus").onclick = () => setGuests(guests + 1);
 $("minus").onclick = () => setGuests(guests - 1);
@@ -146,6 +200,7 @@ async function submit(attending) {
       guests: attending ? guests : 0,
       createdAt: serverTimestamp()
     });
+    try { localStorage.setItem(PREV_KEY, JSON.stringify({ name, attending, guests: attending ? guests : 0 })); } catch {}
     $("thanksMsg").textContent = attending
       ? `אישרנו הגעה של ${guests} ${guests === 1 ? "אורח" : "אורחים"} על שם ${name}.`
       : `קיבלנו, ${name}. נתגעגע!`;
